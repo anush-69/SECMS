@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Smart Elderly Care Monitoring System dashboard for caregivers and families.">
+    <title>SECMS Care Console</title>
+    <link rel="preconnect" href="https://images.unsplash.com">
+    <link rel="preconnect" href="https://images.pexels.com">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+
+    <div id="app-shell-view" class="app-shell">
+      
+      <div id="guest-interaction-shield" class="interaction-shield"></div>
+
+      <aside class="sidebar" aria-label="Primary">
+        <a class="brand" href="#dashboard" aria-label="SECMS dashboard">
+          <span class="brand-mark">S</span>
+          <span>
+            <strong>SECMS</strong>
+            <small>Care Console</small>
+          </span>
+        </a>
+
+        <nav class="nav-list">
+          <a class="nav-link active" href="#dashboard" data-section-link="dashboard">
+            <span class="icon" aria-hidden="true">+</span>
+            Dashboard
+          </a>
+          <a class="nav-link" href="#alerts" data-section-link="alerts">
+            <span class="icon" aria-hidden="true">!</span>
+            Alerts
+          </a>
+          <a class="nav-link" href="#profiles" data-section-link="profiles">
+            <span class="icon" aria-hidden="true">@</span>
+            Profiles
+          </a>
+          <a class="nav-link" href="#analytics" data-section-link="analytics">
+            <span class="icon" aria-hidden="true">~</span>
+            Analytics
+          </a>
+          <a class="nav-link" href="#devices" data-section-link="devices">
+            <span class="icon" aria-hidden="true">#</span>
+            Devices
+          </a>
+          <a class="nav-link" href="#settings" data-section-link="settings">
+            <span class="icon" aria-hidden="true">*</span>
+            Settings
+          </a>
+        </nav>
+
+        <div class="sidebar-care-card">
+          <div class="mini-photo" aria-hidden="true"></div>
+          <p>Night monitoring is active for all enrolled devices.</p>
+          <button class="text-button" type="button" data-open-tour>Run tour</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Live remote care</p>
+            <h1>Smart Elderly Care Monitoring System</h1>
+          </div>
+          
+          <div class="topbar-actions">
+            <label class="search-field">
+              <span aria-hidden="true">/</span>
+              <input id="globalSearch" type="search" placeholder="Search alerts, notes, devices">
+            </label>
+            <button class="icon-button" type="button" data-sound-toggle aria-label="Toggle alert sound" title="Alert sound">
+              <span aria-hidden="true"></span>
+            </button>
+           <div class="theme-switch-wrapper">
+            <span class="switch-label light-text">Light</span>
+            <label class="theme-switch-pill">
+              <input type="button" id="custom-theme-checkbox" data-theme-toggle>
+              <span class="switch-slider"></span>
+            </label>
+            <span class="switch-label dark-text">Dark</span>
+          </div>
+            
+            <span class="auth-divider">|</span>
+            
+            <button id="header-signin-btn" class="secondary-button" type="button">Sign In</button>
+            <button id="header-getfree-btn" class="primary-button rounded-cta" type="button">Get it free</button>
+          </div>
+        </header>
+
+        <section class="hero-band" aria-label="Care overview">
+          <div class="hero-copy">
+            <span class="status-pill critical" id="priorityPill">Critical watch: fall risk elevated</span>
+            <h2 id="heroName">Monitoring Mary Perera</h2>
+            <p>Heart rate, fall detection, GPS, device connectivity, emergency contacts, caregiver notes, and reports in one calm workspace.</p>
+            <div class="hero-actions">
+              <button class="primary-button" type="button" data-action="sos">Emergency SOS</button>
+              <button class="secondary-button" type="button" data-action="report">Generate report</button>
+            </div>
+          </div>
+          <div class="hero-visual" role="img" aria-label="Caregiver checking on an elderly person through connected health technology">
+            <div class="hero-photo"></div>
+            <div class="live-badge">
+              <span class="pulse-dot"></span>
+              Device online
+            </div>
+          </div>
+        </section>
+
+        <section id="dashboard" class="page-section active" data-section="dashboard">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Command center</p>
+              <h2>Dashboard</h2>
+            </div>
+            <div class="segmented" role="tablist" aria-label="Patient filter">
+              <button class="segment active" type="button" data-patient="mary">Mary</button>
+              <button class="segment" type="button" data-patient="anil">Anil</button>
+              <button class="segment" type="button" data-patient="unified">Unified</button>
+            </div>
+          </div>
+
+          <div class="priority-alert" id="priorityAlert">
+            <div>
+              <span class="alert-ring" aria-hidden="true">!</span>
+            </div>
+            <div>
+              <h3>Fall detected near home entrance</h3>
+              <p>SIM800L SMS sent to two emergency contacts. Last GPS fix updated moments ago.</p>
+            </div>
+            <div class="priority-actions">
+              <button class="primary-button small" type="button" data-action="ack">Acknowledge</button>
+              <button class="secondary-button small" type="button" data-section-jump="alerts">View alert</button>
+            </div>
+          </div>
+
+          <div class="metrics-grid">
+            <article class="metric-card heart-card">
+              <div class="card-topline">
+                <span class="metric-icon heart" aria-hidden="true">H</span>
+                <span class="status-pill normal" id="heartStatus">Normal</span>
+              </div>
+              <h3>Heart rate</h3>
+              <div class="metric-value"><span id="heartRate">61</span><small>bpm</small></div>
+              <div class="range-track"><span id="heartRange"></span></div>
+              <p id="heartHint">Within normal care threshold.</p>
+            </article>
+
+            <article class="metric-card">
+              <div class="card-topline">
+                <span class="metric-icon fall" aria-hidden="true">!</span>
+                <span class="status-pill normal" id="fallStatus">Calm</span>
+              </div>
+              <h3>Fall detection</h3>
+              <div class="metric-value"><span id="fallScore">12</span><small>% risk</small></div>
+              <p id="fallHint">No current fall, gait variance monitored.</p>
+              <button class="text-button" type="button" data-action="test-alert">Send test alert</button>
+            </article>
+
+            <article class="metric-card map-card">
+              <div class="card-topline">
+                <span class="metric-icon location" aria-hidden="true">L</span>
+                <span class="status-pill normal" id="gpsStatus">GPS locked</span>
+              </div>
+              <h3>Live location</h3>
+              <div class="map-surface" aria-label="Simulated live map">
+                <div class="map-grid"></div>
+                <div class="route-line"></div>
+                <span class="map-marker" id="mapMarker"></span>
+              </div>
+              <p id="gpsHint">Colombo 07, updated just now.</p>
+            </article>
+
+            <article class="metric-card">
+              <div class="card-topline">
+                <span class="metric-icon device" aria-hidden="true">D</span>
+                <span class="status-pill normal" id="deviceStatus">Online</span>
+              </div>
+              <h3>Device connectivity</h3>
+              <div class="metric-value"><span id="signalStrength">96</span><small>%</small></div>
+              <p id="deviceHint">ESP32, MAX30105, MPU6050, NEO-6M, </p>
+              <div class="device-dots" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
+              </div>
+            </article>
+          </div>
+
+          <div class="two-column">
+            <article class="panel">
+              <div class="panel-heading">
+                <h3>High-risk watchlist</h3>
+                <button class="text-button" type="button" data-section-jump="profiles">Manage</button>
+              </div>
+              <div class="watchlist" id="watchlist"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-heading">
+                <h3>Caregiver notes</h3>
+                <button class="text-button" type="button" data-note-add>Add note</button>
+              </div>
+              <form class="note-form" id="noteForm">
+                <input id="noteText" type="text" placeholder="Add a note, e.g. patient felt dizzy today">
+                <button class="primary-button small" type="submit">Save</button>
+              </form>
+              <div class="notes-list" id="notesList"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="alerts" class="page-section" data-section="alerts">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Calm urgency</p>
+              <h2>Alert Center</h2>
+            </div>
+            <div class="filter-row">
+              <select id="alertFilter" aria-label="Filter alerts">
+                <option value="all">All alerts</option>
+                <option value="critical">Critical</option>
+                <option value="warning">Warning</option>
+                <option value="resolved">Resolved</option>
+              </select>
+              <button class="secondary-button small" type="button" data-action="voice">Voice alert</button>
+            </div>
+          </div>
+          <div class="alert-feed" id="alertFeed"></div>
+        </section>
+
+        <section id="profiles" class="page-section" data-section="profiles">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">People first</p>
+              <h2>Profiles & Contacts</h2>
+            </div>
+            <button class="primary-button small" type="button" data-open-contact>Add contact</button>
+          </div>
+          <div class="profile-grid" id="profileGrid"></div>
+        </section>
+
+        <section id="analytics" class="page-section" data-section="analytics">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Insights</p>
+              <h2>Analytics & History</h2>
+            </div>
+            <div class="filter-row">
+              <input id="fromDate" type="date" aria-label="From date">
+              <select id="eventType" aria-label="Event type">
+                <option>All events</option>
+                <option>Heart rate</option>
+                <option>Falls</option>
+                <option>Location</option>
+              </select>
+              <button class="primary-button small" type="button" data-action="export">Export CSV</button>
+            </div>
+          </div>
+          <div class="analytics-grid">
+            <article class="panel chart-panel">
+              <div class="panel-heading">
+                <h3>Heart rate trend</h3>
+                <span class="muted">Normal range 60-100 bpm</span>
+              </div>
+              <canvas id="heartChart" width="720" height="260" aria-label="Heart rate trend chart"></canvas>
+            </article>
+            <article class="panel chart-panel">
+              <div class="panel-heading">
+                <h3>Fall frequency</h3>
+                <span class="muted">Last 7 days</span>
+              </div>
+              <canvas id="fallChart" width="520" height="260" aria-label="Fall frequency bar chart"></canvas>
+            </article>
+            <article class="panel timeline-panel">
+              <div class="panel-heading">
+                <h3>Location history</h3>
+                <button class="text-button" type="button" data-action="share">Share</button>
+              </div>
+              <div class="timeline" id="locationTimeline"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="devices" class="page-section" data-section="devices">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Hardware fleet</p>
+              <h2>Device Management</h2>
+            </div>
+            <button class="primary-button small" type="button" data-open-device>Add device</button>
+          </div>
+          <div class="device-grid" id="deviceGrid"></div>
+        </section>
+
+        <section id="settings" class="page-section" data-section="settings">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Remote control</p>
+              <h2>Configuration</h2>
+            </div>
+            <button class="primary-button small" type="button" data-push-config>Push changes</button>
+          </div>
+          <div class="settings-grid">
+            <article class="panel">
+              <h3>Enabled modules</h3>
+              <label class="toggle-row">Heart sensor <input type="checkbox" checked><span></span></label>
+              <label class="toggle-row">Fall detection <input type="checkbox" checked><span></span></label>
+              <label class="toggle-row">GPS tracking <input type="checkbox" checked><span></span></label>
+              <label class="toggle-row">SMS alerts <input type="checkbox" checked><span></span></label>
+              <label class="toggle-row">Local buzzer <input type="checkbox" checked><span></span></label>
+            </article>
+            <article class="panel">
+              <h3>Thresholds</h3>
+              <label class="slider-row">High heart rate <strong id="highHrLabel">110 bpm</strong><input id="highHr" type="range" min="90" max="150" value="110"></label>
+              <label class="slider-row">Low heart rate <strong id="lowHrLabel">55 bpm</strong><input id="lowHr" type="range" min="35" max="70" value="55"></label>
+              <label class="slider-row">Fall sensitivity <strong id="fallSensitivityLabel">72%</strong><input id="fallSensitivity" type="range" min="20" max="100" value="72"></label>
+            </article>
+            <article class="panel">
+              <h3>Notification settings</h3>
+              <label class="toggle-row">Voice alerts <input type="checkbox" id="voiceToggle"><span></span></label>
+              <label class="toggle-row">Night mode dimming <input type="checkbox" checked><span></span></label>
+              <label class="toggle-row">Family WhatsApp reports <input type="checkbox"><span></span></label>
+              <button class="secondary-button" type="button" data-action="test-alert">Send test alert</button>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="fab-menu" aria-label="Quick actions">
+      <button class="fab-main" type="button" aria-label="Open quick actions">+</button>
+      <div class="fab-actions">
+        <button type="button" data-action="test-alert">Test alert</button>
+        <button type="button" data-section-jump="devices">Devices</button>
+        <button type="button" data-action="report">Report</button>
+      </div>
+    </div>
+
+    <dialog id="careModal">
+      <form method="dialog" class="modal-card">
+        <button class="modal-close" value="cancel" aria-label="Close">x</button>
+        <h2 id="modalTitle">Confirm action</h2>
+        <p id="modalText">Are you sure?</p>
+        <div id="modalBody"></div>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel">Cancel</button>
+          <button class="primary-button" id="modalConfirm" value="confirm">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="authPortalModal">
+      <div class="modal-card style-auth-card">
+        <button class="modal-close" id="authPortalClose" aria-label="Close">x</button>
+        <div class="auth-brand">
+          <span class="auth-brand-mark">S</span>
+          <div>
+            <strong>SECMS</strong>
+            <small>Care Console Portal</small>
+          </div>
+        </div>
+        <h2 id="authPortalTitle">Create your free account</h2>
+        <p id="authPortalDescription">Access remote tracking telemetry tools, smart emergency SOS actions, and real-time alerts.</p>
+        
+        <form id="authPortalForm" class="modal-form">
+          <div id="authFormFields" class="auth-fields-wrapper">
+            </div>
+          <button class="primary-button inline-submit-auth" type="submit" id="authSubmitButton">Continue</button>
+        </form>
+        
+        <div class="auth-toggle-notice" id="authToggleContainer">
+          <span id="authToggleText">Already using SECMS?</span>
+          <button class="text-button" id="authToggleModeBtn" type="button">Sign In instead</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
