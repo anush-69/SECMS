@@ -177,15 +177,24 @@ A successful response looks like `{"ok":true,"patientId":"mary"}`, and the match
 
 ### Before flashing
 
-1. Install the extra library this sketch now needs beyond the sensor libs already listed in its header: **ArduinoJson** (v7+), via Arduino IDE → Library Manager.
+1. Install the extra libraries this sketch now needs beyond the sensor libs already listed in its header: **ArduinoJson** (v7+) and **ESPmDNS** (bundled with the ESP32 Arduino core — no separate install needed), via Arduino IDE → Library Manager.
 2. Open the sketch and fill in the placeholders near the top:
    ```cpp
    const char *WIFI_SSID = "YOUR_WIFI_SSID";
    const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-   const char *INGEST_URL = "http://192.168.1.50:3000/api/ingest"; // your PC's LAN IP, not "localhost"
    const char *DEVICE_ID = "SECMS-ESP32-001"; // must match a patient's device_id field in Firestore
    ```
-3. Make sure the ESP32 and the machine running `server.js` are on the **same WiFi network**, and that Windows Firewall allows inbound connections on port 3000 (otherwise the ESP32's POSTs will time out even though `localhost:3000` works fine from the same PC).
+   Note there's no IP address to fill in — `MDNS_HOST = "secms"` is already set, and the backend's actual LAN IP is discovered automatically (see below).
+3. On the backend side, `server.js` advertises itself on the LAN as `secms.local` via mDNS (using the `bonjour-service` npm package — installed automatically with `npm install`). Make sure the ESP32 and the machine running `server.js` are on the **same WiFi network**, and that Windows Firewall allows inbound connections on port 3000 (otherwise POSTs will time out even though `localhost:3000` works fine from the same PC).
+
+### Why mDNS instead of a hardcoded IP
+
+A hardcoded `http://<ip>:3000/api/ingest` breaks the moment the server's IP changes — which happens often on phone hotspots, since they hand out DHCP leases that aren't guaranteed to stay the same across reconnects. Instead:
+
+- `server.js` publishes an mDNS A record for `secms.local` pointing at its current IP (see `bonjour.publish(...)` near the bottom of `server.js`).
+- The ESP32 calls `MDNS.queryHost("secms")` to resolve that name to an IP at runtime, caches it, and only re-resolves if a POST fails — so it recovers automatically if the server's IP changes, without needing to reflash.
+
+**Caveat**: mDNS relies on multicast UDP, which some phone hotspots block or restrict between connected clients (AP isolation). If the Serial Monitor keeps printing `mDNS lookup failed`, that's the likely cause — test on a regular WiFi router if possible, or fall back to hardcoding the IP again as a last resort.
 
 ### What it sends
 
@@ -202,7 +211,7 @@ This mirrors `/api/ingest`'s own partial-update behavior (`server.js`), so a tem
 ### Notes on the implementation
 
 - WiFi connects once in `setup()` (15s timeout, then continues in offline/Serial-only mode if it fails — the sketch never gets stuck waiting for WiFi).
-- The HTTP POST is synchronous/blocking (simple `HTTPClient`, no separate task/core), so `INGEST_INTERVAL_MS` is deliberately not too short — a slow network response could otherwise start delaying `readMotion()`'s fall-detection polling. `HTTP_TIMEOUT_MS` caps how long a single stalled request can block the loop.
+- The mDNS lookup and HTTP POST are both synchronous/blocking (simple `HTTPClient`/`MDNS.queryHost()`, no separate task/core), so `INGEST_INTERVAL_MS` is deliberately not too short — a slow network response could otherwise start delaying `readMotion()`'s fall-detection polling. `HTTP_TIMEOUT_MS` caps how long a single stalled request can block the loop.
 - Both `Serial` (`logSerial()`) and the POST response (`Serial.println` of the HTTP status code) are logged for debugging over USB.
 
 Wiring reference (from the sketch header):

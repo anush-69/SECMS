@@ -19,10 +19,13 @@
 
   Networking:
   - Requires the "ArduinoJson" library (v7+) in addition to the sensor libs above.
-  - Fill in WIFI_SSID / WIFI_PASSWORD / INGEST_URL / DEVICE_ID below before flashing.
-  - INGEST_URL must point at the LAN IP of the machine running server.js, e.g.
-    "http://192.168.1.50:3000/api/ingest" - "localhost" will not work here since
-    the ESP32 is a separate device on the network.
+  - Fill in WIFI_SSID / WIFI_PASSWORD / DEVICE_ID below before flashing.
+  - The backend's address is discovered automatically via mDNS as "secms.local"
+    (server.js advertises itself under that name using bonjour-service) - no IP
+    needs to be hardcoded here, and it keeps working if the server's IP changes
+    (e.g. after reconnecting to a phone hotspot). If your network blocks mDNS
+    multicast (some phone hotspots do), the lookup below will fail every cycle;
+    see the sketch's Serial output for "mDNS lookup failed" if that happens.
   - DEVICE_ID must exactly match the "device_id" field on the patient's document
     in the Firestore "patients" collection, or the backend will reject readings
     with 404 "No patient registered for device_id".
@@ -38,6 +41,7 @@
 #include "heartRate.h"
 #include <math.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
@@ -66,7 +70,9 @@ const unsigned long FALL_ALERT_MS = 10000;
 // ---- WiFi & backend configuration: fill these in before flashing ----
 const char *WIFI_SSID = "REDMI Note 15 Pro+ 5G";
 const char *WIFI_PASSWORD = "wovsilva2005";
-const char *INGEST_URL = "http://10.136.101.10:3000/api/ingest";
+const char *MDNS_HOST = "secms";  // resolves "secms.local" - no ".local" suffix here, MDNS.queryHost() adds it
+const uint16_t SERVER_PORT = 3000;
+const char *INGEST_PATH = "/api/ingest";
 const char *DEVICE_ID = "SECMS-ESP32-001";
 
 // How often to POST a telemetry reading. Kept fairly infrequent because each
@@ -114,6 +120,8 @@ unsigned long lastDisplay = 0;
 unsigned long lastSerialLog = 0;
 unsigned long lastIngestSend = 0;
 bool wifiConnected = false;
+IPAddress serverIp;
+bool serverIpResolved = false;
 
 bool fallAlertActive() {
   return fallAlertUntil != 0 && (long)(fallAlertUntil - millis()) > 0;
@@ -415,11 +423,39 @@ void connectWiFi() {
     Serial.print("WiFi connected, IP: ");
     Serial.println(WiFi.localIP());
     drawBootScreen("WiFi OK", WiFi.localIP().toString().c_str());
+
+    if (!MDNS.begin("secms-esp32")) {
+      Serial.println("mDNS responder init failed (device's own name won't resolve, but lookups of secms.local can still work).");
+    }
   } else {
     Serial.println("WiFi connect failed - running offline (Serial/OLED only).");
     drawBootScreen("WiFi FAILED", "Running offline");
   }
   delay(600);
+}
+
+// Looks up the backend's current LAN IP via mDNS. Called lazily from
+// sendTelemetry() rather than once at boot, so if the server's IP changes
+// later (e.g. the hotspot hands out a new DHCP lease), the next failed POST
+// triggers a fresh lookup instead of the device being stuck on a stale IP
+// until reboot.
+bool resolveServerIp() {
+  Serial.print("Resolving ");
+  Serial.print(MDNS_HOST);
+  Serial.println(".local via mDNS...");
+
+  IPAddress found = MDNS.queryHost(MDNS_HOST);
+  if (found == IPAddress(0, 0, 0, 0)) {
+    Serial.println("mDNS lookup failed (no response - check the server is running and mDNS/multicast isn't blocked on this network).");
+    serverIpResolved = false;
+    return false;
+  }
+
+  serverIp = found;
+  serverIpResolved = true;
+  Serial.print("Resolved to ");
+  Serial.println(serverIp);
+  return true;
 }
 
 // Sends the fields we currently have valid readings for. Fields left out of
@@ -432,6 +468,10 @@ void sendTelemetry() {
     return;
   }
   wifiConnected = true;
+
+  if (!serverIpResolved && !resolveServerIp()) {
+    return;  // will retry on the next scheduled send
+  }
 
   JsonDocument payload;
   payload["device_id"] = DEVICE_ID;
@@ -453,8 +493,10 @@ void sendTelemetry() {
   String body;
   serializeJson(payload, body);
 
+  String url = "http://" + serverIp.toString() + ":" + String(SERVER_PORT) + INGEST_PATH;
+
   HTTPClient http;
-  http.begin(INGEST_URL);
+  http.begin(url);
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(HTTP_TIMEOUT_MS);
 
@@ -465,6 +507,8 @@ void sendTelemetry() {
   } else {
     Serial.print("Ingest POST failed: ");
     Serial.println(http.errorToString(statusCode));
+    // Could mean the server's IP changed - force a fresh mDNS lookup next time.
+    serverIpResolved = false;
   }
   http.end();
 }

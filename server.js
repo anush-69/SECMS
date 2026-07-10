@@ -4,6 +4,7 @@ const path = require("path");
 const url = require("url");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { Bonjour } = require("bonjour-service");
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
@@ -107,6 +108,14 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`SECMS web platform running at http://localhost:${PORT}`);
+});
+
+const bonjour = new Bonjour();
+bonjour.publish({ name: "SECMS Backend", type: "http", port: PORT, host: "secms.local" });
+console.log("Advertising this server on the LAN as secms.local via mDNS");
+
+process.on("SIGINT", () => {
+  bonjour.unpublishAll(() => process.exit(0));
 });
 
 function safeFilePath(requestPath) {
