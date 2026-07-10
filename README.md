@@ -138,7 +138,7 @@ Then open `http://localhost:3000`.
 - **Real**: patient data on the dashboard (heart rate, fall status, temperature, GPS) comes straight from Firestore.
 - **Real**: the Alert Center is generated live from that same data — the moment a patient's heart rate/temperature crosses a warning/critical threshold, or `fall_detect` flips to `true`, a new alert appears (and auto-resolves when the condition clears). Nothing here is stored — it's recomputed from current Firestore state.
 - **Demo/local only**: the `alerts`/`devices`/`config` returned by `GET /api/state` are an in-memory, non-persistent placeholder — restarting `server.js` resets them. These aren't part of the Firebase-backed data path.
-- **Not yet wired**: the ESP32 firmware (§7) currently only logs sensor readings to Serial/OLED — it does not yet POST to `/api/ingest`. See §7 for what's needed to complete that link.
+- **Real (once flashed)**: the ESP32 firmware (§7) connects to WiFi and POSTs live sensor readings to `/api/ingest` every ~8 seconds, in addition to its existing Serial/OLED output. You must fill in your WiFi credentials, server IP, and device ID in the sketch before flashing — see §7.
 
 ---
 
@@ -163,14 +163,39 @@ A successful response looks like `{"ok":true,"patientId":"mary"}`, and the match
 
 ---
 
-## 7. Hardware integration path (ESP32)
+## 7. Hardware integration (ESP32)
 
-`arduino/SCEMS_Wemos_Lolin32_Lite/SCEMS_Wemos_Lolin32_Lite.ino` already reads all four sensors and shows live values on an OLED, but it does not yet talk to the network. To complete the pipeline:
+`arduino/SCEMS_Wemos_Lolin32_Lite/SCEMS_Wemos_Lolin32_Lite.ino` reads all four sensors, shows live values on the OLED, **and** POSTs readings to the backend over WiFi. No Firebase credentials live on the device — only the Node server (via the Admin SDK) is trusted to write to Firestore; the ESP32 just talks to your server's `/api/ingest` endpoint.
 
-1. Add WiFi + HTTP client libraries: `WiFi.h`, `HTTPClient.h`, and `ArduinoJson.h`.
-2. Connect to WiFi in `setup()`.
-3. On a timer (e.g. every 5–10s), build a JSON body from the sketch's existing sensor variables (`bpmAverage`, `bodyTempC`, `fallAlertActive()`, `gps.location.lng()`, `gps.location.lat()`) and `HTTPClient.POST()` it to `http://<server-host>:3000/api/ingest`, including a hardcoded `device_id` matching the value stored on the patient's Firestore document.
-4. No Firebase credentials are needed on the device — only your Node server (via the Admin SDK) is trusted to write.
+### Before flashing
+
+1. Install the extra library this sketch now needs beyond the sensor libs already listed in its header: **ArduinoJson** (v7+), via Arduino IDE → Library Manager.
+2. Open the sketch and fill in the placeholders near the top:
+   ```cpp
+   const char *WIFI_SSID = "YOUR_WIFI_SSID";
+   const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+   const char *INGEST_URL = "http://192.168.1.50:3000/api/ingest"; // your PC's LAN IP, not "localhost"
+   const char *DEVICE_ID = "SECMS-ESP32-001"; // must match a patient's device_id field in Firestore
+   ```
+3. Make sure the ESP32 and the machine running `server.js` are on the **same WiFi network**, and that Windows Firewall allows inbound connections on port 3000 (otherwise the ESP32's POSTs will time out even though `localhost:3000` works fine from the same PC).
+
+### What it sends
+
+Every ~8 seconds (`INGEST_INTERVAL_MS`), `sendTelemetry()` POSTs a JSON body to `/api/ingest` containing only the fields it currently has a valid reading for:
+
+- `device_id` — always included.
+- `heart_rate` — only if a finger is detected and a BPM average has been computed.
+- `body_temp` — only if the MLX90614 initialized and returned a non-NaN reading.
+- `fall_detect` — boolean, included whenever the MPU6050 initialized.
+- `latitude`/`longitude` — only once the GPS has a valid fix.
+
+This mirrors `/api/ingest`'s own partial-update behavior (`server.js`), so a temporarily missing GPS fix or an unplaced finger never overwrites good data already stored for that patient — it just skips that field for one cycle.
+
+### Notes on the implementation
+
+- WiFi connects once in `setup()` (15s timeout, then continues in offline/Serial-only mode if it fails — the sketch never gets stuck waiting for WiFi).
+- The HTTP POST is synchronous/blocking (simple `HTTPClient`, no separate task/core), so `INGEST_INTERVAL_MS` is deliberately not too short — a slow network response could otherwise start delaying `readMotion()`'s fall-detection polling. `HTTP_TIMEOUT_MS` caps how long a single stalled request can block the loop.
+- Both `Serial` (`logSerial()`) and the POST response (`Serial.println` of the HTTP status code) are logged for debugging over USB.
 
 Wiring reference (from the sketch header):
 

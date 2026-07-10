@@ -16,6 +16,16 @@
   - GPS RX -> ESP32 GPIO17
   - All VCC/VIN/VDD -> ESP32 3V pin
   - All GND pins together
+
+  Networking:
+  - Requires the "ArduinoJson" library (v7+) in addition to the sensor libs above.
+  - Fill in WIFI_SSID / WIFI_PASSWORD / INGEST_URL / DEVICE_ID below before flashing.
+  - INGEST_URL must point at the LAN IP of the machine running server.js, e.g.
+    "http://192.168.1.50:3000/api/ingest" - "localhost" will not work here since
+    the ESP32 is a separate device on the network.
+  - DEVICE_ID must exactly match the "device_id" field on the patient's document
+    in the Firestore "patients" collection, or the backend will reject readings
+    with 404 "No patient registered for device_id".
 */
 
 #include <Wire.h>
@@ -27,6 +37,9 @@
 #include "MAX30105.h"
 #include "heartRate.h"
 #include <math.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 
 // ESP32 pin choices for WEMOS LOLIN32 LITE.
 const int I2C_SDA_PIN = 19;
@@ -49,6 +62,19 @@ const float IMPACT_G = 2.50;
 const float HARD_IMPACT_G = 3.20;
 const unsigned long IMPACT_WINDOW_MS = 1200;
 const unsigned long FALL_ALERT_MS = 10000;
+
+// ---- WiFi & backend configuration: fill these in before flashing ----
+const char *WIFI_SSID = "REDMI Note 15 Pro+ 5G";
+const char *WIFI_PASSWORD = "wovsilva2005";
+const char *INGEST_URL = "http://10.136.101.10:3000/api/ingest";
+const char *DEVICE_ID = "SECMS-ESP32-001";
+
+// How often to POST a telemetry reading. Kept fairly infrequent because each
+// POST blocks the loop for up to HTTP_TIMEOUT_MS if the network is slow -
+// too short an interval would start starving readMotion()'s fall-detection
+// polling.
+const unsigned long INGEST_INTERVAL_MS = 8000;
+const uint16_t HTTP_TIMEOUT_MS = 4000;
 
 // 1.3 inch I2C OLEDs are commonly SH1106. If your OLED stays blank, try the
 // SSD1306 constructor shown below instead.
@@ -86,6 +112,8 @@ unsigned long lastTempRead = 0;
 unsigned long lastMotionRead = 0;
 unsigned long lastDisplay = 0;
 unsigned long lastSerialLog = 0;
+unsigned long lastIngestSend = 0;
+bool wifiConnected = false;
 
 bool fallAlertActive() {
   return fallAlertUntil != 0 && (long)(fallAlertUntil - millis()) > 0;
@@ -370,6 +398,83 @@ void logSerial() {
   Serial.println();
 }
 
+void connectWiFi() {
+  drawBootScreen("Connecting WiFi", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  wifiConnected = WiFi.status() == WL_CONNECTED;
+  if (wifiConnected) {
+    Serial.print("WiFi connected, IP: ");
+    Serial.println(WiFi.localIP());
+    drawBootScreen("WiFi OK", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("WiFi connect failed - running offline (Serial/OLED only).");
+    drawBootScreen("WiFi FAILED", "Running offline");
+  }
+  delay(600);
+}
+
+// Sends the fields we currently have valid readings for. Fields left out of
+// the JSON body are left untouched on the backend (see server.js /api/ingest),
+// so a missing GPS fix or unread finger sensor doesn't overwrite good data
+// already stored for this patient.
+void sendTelemetry() {
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiConnected = false;
+    return;
+  }
+  wifiConnected = true;
+
+  JsonDocument payload;
+  payload["device_id"] = DEVICE_ID;
+
+  if (heartReady && fingerDetected && bpmAverage > 0) {
+    payload["heart_rate"] = bpmAverage;
+  }
+  if (mlxReady && !isnan(bodyTempC)) {
+    payload["body_temp"] = bodyTempC;
+  }
+  if (mpuReady) {
+    payload["fall_detect"] = fallAlertActive();
+  }
+  if (gps.location.isValid()) {
+    payload["latitude"] = gps.location.lat();
+    payload["longitude"] = gps.location.lng();
+  }
+
+  String body;
+  serializeJson(payload, body);
+
+  HTTPClient http;
+  http.begin(INGEST_URL);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(HTTP_TIMEOUT_MS);
+
+  int statusCode = http.POST(body);
+  if (statusCode > 0) {
+    Serial.print("Ingest POST -> HTTP ");
+    Serial.println(statusCode);
+  } else {
+    Serial.print("Ingest POST failed: ");
+    Serial.println(http.errorToString(statusCode));
+  }
+  http.end();
+}
+
+void sendTelemetryIfDue() {
+  if (millis() - lastIngestSend < INGEST_INTERVAL_MS) return;
+  lastIngestSend = millis();
+  sendTelemetry();
+}
+
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(500);
@@ -384,6 +489,8 @@ void setup() {
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.println("GPS serial started at 9600 baud.");
 
+  connectWiFi();
+
   drawBootScreen("Ready", "Open Serial Monitor");
 }
 
@@ -394,4 +501,5 @@ void loop() {
   readMotion();
   renderDisplay();
   logSerial();
+  sendTelemetryIfDue();
 }
