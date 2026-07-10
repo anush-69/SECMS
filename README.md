@@ -67,11 +67,15 @@ service cloud.firestore {
       }
     }
 
-    // Patient telemetry — any signed-in caregiver can read; only the trusted
-    // backend (Admin SDK, bypasses these rules) is allowed to write.
+    // Patient telemetry — any signed-in user can read. A signed-in user may
+    // CREATE only a document whose ID equals their own UID (this is how
+    // sign-up provisions a new patient record client-side). Updates/deletes
+    // are blocked from the client entirely — only the trusted backend
+    // (Admin SDK, bypasses these rules) can write sensor readings.
     match /patients/{patientId} {
       allow read: if request.auth != null;
-      allow write: if false;
+      allow create: if request.auth != null && request.auth.uid == patientId;
+      allow update, delete: if false;
     }
   }
 }
@@ -89,28 +93,32 @@ service cloud.firestore {
 
 ### Collection: `patients`
 
-One document per patient. **Document ID = `user_id`.**
+One document per patient. **Document ID = `user_id`** (the patient's Firebase Auth UID for accounts created through the app's sign-up flow; a hand-picked slug like `mary` for anything added manually).
 
 | Field | Type | Set by | Description |
 |---|---|---|---|
-| `user_id` | string | you (console) | Same value as the document ID; kept as a field too so it's available on any document snapshot without extra lookup code. |
-| `fname` | string | you (console) | First name. |
-| `lname` | string | you (console) | Last name. |
-| `username` | string | you (console) | Login/display handle. |
-| `age` | number | you (console) | Patient age. |
-| `condition` | string | you (console) | Free-text monitoring note, e.g. `"Hypertension watch"`. |
-| `contact_phone` | string | you (console) | A single emergency contact number (kept intentionally simple — no nested contact list). |
-| `device_id` | string | you (console) | The ESP32 device assigned to this patient, e.g. `"SECMS-ESP32-001"`. This is how `/api/ingest` maps an incoming sensor payload to the right patient document. |
-| `heart_rate` | number | backend (`/api/ingest`) | Latest BPM reading. |
-| `body_temp` | number | backend (`/api/ingest`) | Latest body temperature, °C. |
-| `fall_detect` | boolean | backend (`/api/ingest`) | `true` while a fall/impact condition is active. |
-| `longitude` | number | backend (`/api/ingest`) | Latest GPS longitude. |
-| `latitude` | number | backend (`/api/ingest`) | Latest GPS latitude. |
-| `last_updated` | timestamp | backend (`/api/ingest`, server-generated) | Set automatically via `FieldValue.serverTimestamp()` on every ingest write. |
+| `user_id` | string | sign-up (auto) / you (console) | Same value as the document ID; kept as a field too so it's available on any document snapshot without extra lookup code. |
+| `fname` | string | sign-up (auto) / you (console) | First name — split from the account's display name. |
+| `lname` | string | sign-up (auto) / you (console) | Last name. |
+| `username` | string | sign-up (auto) / you (console) | Auto-derived from the email address's local part at sign-up (e.g. `anush69@gmail.com` → `anush69`). |
+| `age` | number | you (console) | Patient age — not collected at sign-up; add manually if needed. |
+| `condition` | string | you (console) | Free-text monitoring note, e.g. `"Hypertension watch"` — not collected at sign-up. |
+| `contact_phone` | string | you (console) | A single emergency contact number (kept intentionally simple — no nested contact list) — not collected at sign-up. |
+| `device_id` | string | you (console) | The ESP32 device assigned to this patient, e.g. `"SECMS-ESP32-001"`. Created empty (`""`) at sign-up — assign it manually once you know which device belongs to this patient. This is how `/api/ingest` maps an incoming sensor payload to the right patient document. |
+| `heart_rate` | number \| null | backend (`/api/ingest`) | Latest BPM reading. `null` until the first sensor payload arrives. |
+| `body_temp` | number \| null | backend (`/api/ingest`) | Latest body temperature, °C. `null` until the first sensor payload arrives. |
+| `fall_detect` | boolean | sign-up (`false`) / backend (`/api/ingest`) | `true` while a fall/impact condition is active. |
+| `longitude` | number \| null | backend (`/api/ingest`) | Latest GPS longitude. `null` until the first GPS fix. |
+| `latitude` | number \| null | backend (`/api/ingest`) | Latest GPS latitude. `null` until the first GPS fix. |
+| `last_updated` | timestamp \| null | backend (`/api/ingest`, server-generated) | Set automatically via `FieldValue.serverTimestamp()` on every ingest write. `null` until the first one. |
 
-**You set up `user_id`/`fname`/`lname`/`username`/`age`/`condition`/`contact_phone`/`device_id` once, manually, in the Firestore console** when you register a patient. The remaining five fields (`heart_rate`, `body_temp`, `fall_detect`, `longitude`, `latitude`, `last_updated`) are written automatically by the backend every time a sensor payload arrives.
+### How a patient document gets created
 
-### Adding a new patient (manual, console)
+**Automatically at sign-up** (the normal path): when a caregiver creates an account — either email/password or Google — `app.js` writes a new `patients/{uid}` document via `createPatientDocument()`, populating `user_id`/`fname`/`lname`/`username`/`device_id` (empty)/`fall_detect` (`false`), and leaving the five sensor fields as `null` since there's no reading yet. This only fires once per account (checked via Firebase's `isNewUser` flag for Google, and inherently true for every `createUserWithEmailAndPassword` call).
+
+Firestore rules permit this narrowly: a signed-in user may `create` (not `update`/`delete`) only a document whose ID equals their own UID — see §3.3.
+
+**Manually, in the console** (for test data or patients who won't sign in themselves):
 
 1. Firestore Database → `patients` → **Add document**.
 2. Document ID: pick a short handle (this becomes `user_id`), e.g. `mary`.

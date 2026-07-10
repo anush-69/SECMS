@@ -10,9 +10,11 @@ import {
   signOut,
   GoogleAuthProvider,
   signInWithPopup,
-  sendEmailVerification
+  getAdditionalUserInfo,
+  sendEmailVerification,
+  updateProfile
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBXAYTtaJnG_B1RY5c9J6Bh9U-rJxoDKJk",
@@ -179,7 +181,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById("google-signin-action-btn").addEventListener("click", () => {
       signInWithPopup(auth, googleProvider)
-        .then(() => authModal.close())
+        .then((result) => {
+          authModal.close();
+          if (getAdditionalUserInfo(result)?.isNewUser) {
+            createPatientDocument(result.user, result.user.displayName);
+          }
+        })
         .catch((err) => toast(`Google Auth Error: ${err.message}`));
     });
   }
@@ -204,7 +211,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const password = document.getElementById("auth-pass").value;
 
       if (authPortalMode === "signup") {
+        const fullName = document.getElementById("auth-name").value.trim();
         createUserWithEmailAndPassword(auth, email, password)
+          .then((userCredential) => updateProfile(userCredential.user, { displayName: fullName }).then(() => userCredential))
+          .then((userCredential) => createPatientDocument(userCredential.user, fullName).then(() => userCredential))
           .then((userCredential) => {
             // Send Verification email sequence immediately
             sendEmailVerification(userCredential.user)
@@ -332,10 +342,54 @@ function bindSettings() {
   });
 }
 
+async function createPatientDocument(user, fullName) {
+  const trimmedName = (fullName || user.displayName || "").trim();
+  const [firstName, ...rest] = trimmedName.split(/\s+/);
+  const lastName = rest.join(" ");
+  const username = (user.email || "").split("@")[0];
+
+  try {
+    await setDoc(doc(db, "patients", user.uid), {
+      user_id: user.uid,
+      fname: firstName || "",
+      lname: lastName || "",
+      username,
+      device_id: "",
+      heart_rate: null,
+      body_temp: null,
+      fall_detect: false,
+      longitude: null,
+      latitude: null,
+      last_updated: null
+    });
+  } catch (error) {
+    toast(`Could not set up patient record: ${error.message}`);
+  }
+}
+
 function subscribeToPatients() {
   if (unsubscribePatients) return;
-  unsubscribePatients = onSnapshot(collection(db, "patients"), (snapshot) => {
+
+  const displayName = (auth.currentUser?.displayName || "").trim();
+  const [firstName, ...rest] = displayName.split(/\s+/);
+  const lastName = rest.join(" ");
+  if (!firstName || !lastName) {
+    toast("Your account needs a first and last name on file to match a patient record.");
+    return;
+  }
+
+  const patientsQuery = query(
+    collection(db, "patients"),
+    where("fname", "==", firstName),
+    where("lname", "==", lastName)
+  );
+
+  unsubscribePatients = onSnapshot(patientsQuery, (snapshot) => {
     state.patients = snapshot.docs.map(mapPatientDoc);
+
+    if (!state.patients.length) {
+      toast(`No patient record found matching "${displayName}".`);
+    }
 
     const validIds = new Set([...state.patients.map((patient) => patient.id), "unified"]);
     if (!validIds.has(state.selectedPatient)) {
