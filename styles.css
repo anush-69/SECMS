@@ -345,6 +345,10 @@ h3 {
   line-height: 1.05;
 }
 
+.hero-name-highlight {
+  color: var(--green);
+}
+
 .hero-copy p {
   max-width: 640px;
   margin: 0;
@@ -382,8 +386,7 @@ h3 {
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.18);
 }
 
-.pulse-dot,
-.device-dots span {
+.pulse-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -435,9 +438,18 @@ h3 {
   box-shadow: 0 12px 34px rgba(22, 45, 48, 0.06);
 }
 
+.priority-alerts {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.priority-alerts:empty {
+  margin-bottom: 0;
+}
+
 .priority-alert {
   padding: 16px;
-  margin-bottom: 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -446,16 +458,29 @@ h3 {
   background: linear-gradient(135deg, rgba(216, 58, 58, 0.11), rgba(244, 184, 106, 0.12)), var(--surface);
 }
 
+.priority-alert.warning {
+  border-color: rgba(196, 122, 22, 0.4);
+  background: linear-gradient(135deg, rgba(196, 122, 22, 0.12), rgba(244, 184, 106, 0.12)), var(--surface);
+}
+
 .alert-ring {
   width: 48px;
   height: 48px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: var(--red);
   color: #fff;
   font-weight: 900;
+}
+
+.alert-ring.critical {
+  background: var(--red);
   animation: alertGlow 1.7s ease-in-out infinite;
+}
+
+.alert-ring.warning {
+  background: var(--amber);
+  animation: alertGlowWarning 1.7s ease-in-out infinite;
 }
 
 .priority-alert p {
@@ -532,6 +557,11 @@ h3 {
 .metric-icon.location {
   color: var(--blue);
   background: rgba(37, 99, 235, 0.12);
+}
+
+.metric-icon.temp {
+  color: var(--warm);
+  background: rgba(244, 184, 106, 0.18);
 }
 
 .metric-value {
@@ -623,25 +653,6 @@ h3 {
   box-shadow: 0 0 0 8px rgba(216, 58, 58, 0.18);
 }
 
-.device-dots {
-  display: flex;
-  gap: 7px;
-  margin-top: 12px;
-}
-
-.device-dots span:nth-child(2) {
-  animation-delay: 0.18s;
-}
-
-.device-dots span:nth-child(3) {
-  animation-delay: 0.36s;
-}
-
-.device-dots span:nth-child(4) {
-  animation-delay: 0.54s;
-}
-
-.two-column,
 .analytics-grid {
   display: grid;
   grid-template-columns: 0.95fr 1.05fr;
@@ -649,27 +660,18 @@ h3 {
   margin-top: 16px;
 }
 
-.watchlist,
-.notes-list,
 .alert-feed,
 .timeline {
   display: grid;
   gap: 10px;
 }
 
-.watch-card,
-.note-item,
 .timeline-item {
   padding: 12px;
   border-radius: 8px;
   background: var(--surface-2);
   display: grid;
   gap: 4px;
-}
-
-.watch-card {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
 }
 
 .avatar {
@@ -683,8 +685,6 @@ h3 {
   background: linear-gradient(135deg, var(--teal), var(--warm));
 }
 
-.watch-card p,
-.note-item p,
 .timeline-item p,
 .alert-item p,
 .profile-card p,
@@ -692,13 +692,6 @@ h3 {
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
-}
-
-.note-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-bottom: 12px;
 }
 
 input,
@@ -1013,6 +1006,16 @@ dialog::backdrop {
   }
 }
 
+@keyframes alertGlowWarning {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(196, 122, 22, 0.38);
+  }
+  50% {
+    box-shadow: 0 0 0 14px rgba(196, 122, 22, 0);
+  }
+}
+
 @keyframes toastIn {
   from {
     transform: translateY(8px);
@@ -1080,7 +1083,6 @@ dialog::backdrop {
     min-height: 260px;
   }
 
-  .two-column,
   .analytics-grid,
   .profile-grid,
   .settings-grid,
@@ -1142,7 +1144,7 @@ dialog::backdrop {
 
 .rounded-cta {
   border-radius: 99px !important;
-  background: #2563eb !important;
+  background: var(--green) !important;
   color: #fff !important;
   padding: 0 20px !important;
 }
@@ -1286,7 +1288,7 @@ body.dark .dark-text { color: var(--text); }
 .switch-slider {
   position: absolute;
   inset: 0;
-  background-color: #7bb1f0; /* Sky blue background color */
+  background-color: var(--green); /* Theme green background color */
   border-radius: 999px;
   transition: background-color 0.25s ease;
 }
@@ -1307,7 +1309,7 @@ body.dark .dark-text { color: var(--text); }
 
 /* When body has the dark class active, adjust switch slider layout colors */
 body.dark .switch-slider {
-  background-color: #2b4666;
+  background-color: #1f4a38;
 }
 
 /* Shift slider thumb indicator over to the right when dark layout is active */
@@ -1380,4 +1382,23 @@ body.dark .switch-slider::before {
 
 .google-icon {
   flex-shrink: 0;
+}
+
+/* ==========================================================================
+   TEMPORARILY HIDDEN NAV ITEMS AND QUICK-ACTIONS FAB
+   ========================================================================== */
+.nav-link[data-section-link="analytics"],
+.nav-link[data-section-link="devices"],
+.nav-link[data-section-link="settings"],
+.sidebar-care-card,
+.fab-menu,
+.hero-actions [data-action="sos"],
+.hero-actions [data-action="report"],
+.search-field,
+#priorityPill,
+[data-sound-toggle],
+[data-open-contact],
+[data-action="voice"],
+[data-alert-action="call"] {
+  display: none;
 }

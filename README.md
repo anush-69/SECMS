@@ -1,53 +1,213 @@
 # SECMS Care Console
 
-A full-stack prototype for the Smart Elderly Care Monitoring System. The frontend is a premium responsive dashboard for caregivers and family members, and the backend is a dependency-free Node.js simulator that exposes API endpoints for live state, alerts, and remote configuration.
+A full-stack Smart Elderly Care Monitoring System. The frontend is a responsive caregiver dashboard; the backend is a small dependency-light Node.js server that bridges real sensor data (ESP32 + heart rate / fall / GPS / temperature sensors) into **Cloud Firestore**, which the dashboard reads from in real time.
 
-## What is included
+- **Frontend**: static HTML/CSS/vanilla JS dashboard (`index.html`, `app.js`, `styles.css`), no build step.
+- **Auth**: Firebase Authentication (email/password with email verification, and Google sign-in).
+- **Database**: Cloud Firestore (`patients` collection) — the dashboard listens to it live via `onSnapshot`, so any write shows up instantly with no page refresh.
+- **Backend**: `server.js` — a plain Node `http` server that serves the static files, exposes a small demo alerts/config API, and exposes `POST /api/ingest`, which is the only thing allowed to write sensor readings into Firestore (using the Firebase **Admin SDK**, authenticated with a service account key).
+- **Hardware**: `arduino/SCEMS_Wemos_Lolin32_Lite/SCEMS_Wemos_Lolin32_Lite.ino` — ESP32 firmware reading a MAX30102 (heart rate), MPU6050 (fall detection), NEO-6M (GPS), and MLX90614 (body temperature) sensor cluster with an OLED status display.
 
-- Live dashboard cards for heart rate, fall status, GPS location, and device connectivity.
-- Alert center with severity sorting, acknowledge/dismiss actions, call/location actions, sound, and voice alert support.
-- Elderly profiles and emergency contact cards.
-- Analytics with canvas charts, location timeline, filters, CSV export, and generated report actions.
-- Remote configuration toggles and thresholds for ESP32 hardware modules.
-- Device management cards with quick actions.
-- Caregiver notes, dark mode, onboarding tour, mobile-first responsive layout, and floating quick action menu.
-- Browser fallback simulator, so `index.html` works even without the backend.
+---
 
-## Run
+## 1. Architecture at a glance
 
-If Node.js is installed:
+```
+ESP32 + sensors  --HTTP POST-->  server.js (/api/ingest)  --Admin SDK-->  Firestore "patients" collection
+                                                                                   |
+                                                                          onSnapshot (live)
+                                                                                   v
+                                                                     Browser dashboard (app.js)
+```
+
+- The **browser never writes** to Firestore directly — Firestore security rules block all client writes on `patients`. Only the trusted backend (Admin SDK, which bypasses security rules) can write.
+- The **browser only reads** `patients` live via `onSnapshot`, and only once the caregiver is signed in and email-verified (enforced both by the UI and by Firestore rules: `allow read: if request.auth != null`).
+- Alerts shown in the Alert Center are **not** stored anywhere — they're generated client-side in real time whenever a patient's live values cross a risk threshold (see §5).
+
+---
+
+## 2. Prerequisites
+
+- [Node.js](https://nodejs.org/) 18+ (only needed to run `server.js`; the frontend alone can be opened as a static file).
+- A Firebase project with **Authentication** and **Cloud Firestore** enabled.
+- (Optional, for real hardware) Arduino IDE with ESP32 board support, and the libraries listed in the `.ino` file header.
+
+---
+
+## 3. Firebase project setup (one-time)
+
+### 3.1 Create/open the Firebase project
+
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) and open (or create) your project.
+2. Under **Build → Authentication → Sign-in method**, enable:
+   - **Email/Password**
+   - **Google**
+3. Copy the web app config (Project settings → General → Your apps → SDK setup and configuration) into `firebaseConfig` at the top of `app.js` — this repo already has a config wired in; replace it with your own project's values if you fork this.
+
+### 3.2 Create the Firestore database
+
+1. **Build → Firestore Database → Create database.**
+2. Choose **Production mode** and pick a region close to your users (can't be changed later).
+3. Create a collection named **`patients`**. Each document represents one monitored patient, with the **Document ID equal to the patient's `user_id`** (e.g. `mary`, `anush69`) — see §4 for the full field list.
+
+### 3.3 Publish Firestore security rules
+
+Go to **Firestore Database → Rules** and publish:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Root user document restriction (per-caregiver profile data, if used)
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      match /{allPaths=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Patient telemetry — any signed-in caregiver can read; only the trusted
+    // backend (Admin SDK, bypasses these rules) is allowed to write.
+    match /patients/{patientId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}
+```
+
+### 3.4 Generate a service account key (lets the backend write to Firestore)
+
+1. **Project settings (gear icon) → Service accounts → Generate new private key.**
+2. This downloads a JSON file. **Never commit this file or share its contents.**
+3. Rename it to `serviceAccountKey.json` and place it in the project root (`D:\Z_notes\SLIIT-1-1\SECMS\serviceAccountKey.json`). `.gitignore` already excludes it.
+
+---
+
+## 4. Firestore data model
+
+### Collection: `patients`
+
+One document per patient. **Document ID = `user_id`.**
+
+| Field | Type | Set by | Description |
+|---|---|---|---|
+| `user_id` | string | you (console) | Same value as the document ID; kept as a field too so it's available on any document snapshot without extra lookup code. |
+| `fname` | string | you (console) | First name. |
+| `lname` | string | you (console) | Last name. |
+| `username` | string | you (console) | Login/display handle. |
+| `age` | number | you (console) | Patient age. |
+| `condition` | string | you (console) | Free-text monitoring note, e.g. `"Hypertension watch"`. |
+| `contact_phone` | string | you (console) | A single emergency contact number (kept intentionally simple — no nested contact list). |
+| `device_id` | string | you (console) | The ESP32 device assigned to this patient, e.g. `"SECMS-ESP32-001"`. This is how `/api/ingest` maps an incoming sensor payload to the right patient document. |
+| `heart_rate` | number | backend (`/api/ingest`) | Latest BPM reading. |
+| `body_temp` | number | backend (`/api/ingest`) | Latest body temperature, °C. |
+| `fall_detect` | boolean | backend (`/api/ingest`) | `true` while a fall/impact condition is active. |
+| `longitude` | number | backend (`/api/ingest`) | Latest GPS longitude. |
+| `latitude` | number | backend (`/api/ingest`) | Latest GPS latitude. |
+| `last_updated` | timestamp | backend (`/api/ingest`, server-generated) | Set automatically via `FieldValue.serverTimestamp()` on every ingest write. |
+
+**You set up `user_id`/`fname`/`lname`/`username`/`age`/`condition`/`contact_phone`/`device_id` once, manually, in the Firestore console** when you register a patient. The remaining five fields (`heart_rate`, `body_temp`, `fall_detect`, `longitude`, `latitude`, `last_updated`) are written automatically by the backend every time a sensor payload arrives.
+
+### Adding a new patient (manual, console)
+
+1. Firestore Database → `patients` → **Add document**.
+2. Document ID: pick a short handle (this becomes `user_id`), e.g. `mary`.
+3. Add each field from the table above with the matching type (`string`, `number`, `boolean`, `timestamp`).
+4. For the five backend-owned fields, seed any placeholder values (they'll be overwritten on the first real ingest) — e.g. `heart_rate: 0`, `body_temp: 0`, `fall_detect: false`, `longitude: 0`, `latitude: 0`, `last_updated`: today's date/time.
+
+---
+
+## 5. Running the project
 
 ```bash
+npm install
 npm start
 ```
 
-Then open:
+Then open `http://localhost:3000`.
 
-```text
-http://localhost:3000
+- `npm install` pulls in `firebase-admin` (the only real dependency this project has).
+- `server.js` needs `serviceAccountKey.json` to exist in the project root (see §3.4) — it will crash on startup otherwise.
+- Sign in via the auth modal (email/password, with email verification required, or Google). The dashboard stays blank/locked until you're signed in **and** verified — this matches the Firestore rule that blocks reads for anonymous users.
+- Once signed in, `app.js` opens a live `onSnapshot` listener on `patients` — any document in that collection appears immediately, no page refresh needed.
+
+### What's simulated vs. real right now
+
+- **Real**: patient data on the dashboard (heart rate, fall status, temperature, GPS) comes straight from Firestore.
+- **Real**: the Alert Center is generated live from that same data — the moment a patient's heart rate/temperature crosses a warning/critical threshold, or `fall_detect` flips to `true`, a new alert appears (and auto-resolves when the condition clears). Nothing here is stored — it's recomputed from current Firestore state.
+- **Demo/local only**: the `alerts`/`devices`/`config` returned by `GET /api/state` are an in-memory, non-persistent placeholder — restarting `server.js` resets them. These aren't part of the Firebase-backed data path.
+- **Not yet wired**: the ESP32 firmware (§7) currently only logs sensor readings to Serial/OLED — it does not yet POST to `/api/ingest`. See §7 for what's needed to complete that link.
+
+---
+
+## 6. Backend API (`server.js`)
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/ingest` | `POST` | **The real one.** Body: `{ device_id, heart_rate?, body_temp?, fall_detect?, longitude?, latitude? }`. Looks up the `patients` document whose `device_id` matches, merges the given fields into it via the Admin SDK, and stamps `last_updated`. Returns `404` if no patient is registered for that `device_id`. |
+| `/api/state` | `GET` | Returns the in-memory demo `alerts`/`devices`/`config` (not Firestore-backed). |
+| `/api/alerts` | `POST` | Appends a demo alert to the in-memory list (used by the "SOS"/"Test alert" UI actions when a backend is running). |
+| `/api/config` | `POST` | Updates the in-memory demo config (threshold sliders on the Settings page). |
+
+Manual test of the real path:
+
+```bash
+curl -X POST http://localhost:3000/api/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"SECMS-ESP32-001","heart_rate":91,"body_temp":37.4,"fall_detect":false,"longitude":79.8620,"latitude":6.9280}'
 ```
 
-If Node.js is not installed, open `index.html` directly in a browser. The frontend will use its built-in simulator.
+A successful response looks like `{"ok":true,"patientId":"mary"}`, and the matching Firestore document updates immediately — which you'll see reflected live on the dashboard if it's open.
 
-This workspace also includes a PowerShell backend for Windows machines without Node.js:
+---
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\server.ps1 -Port 3000
+## 7. Hardware integration path (ESP32)
+
+`arduino/SCEMS_Wemos_Lolin32_Lite/SCEMS_Wemos_Lolin32_Lite.ino` already reads all four sensors and shows live values on an OLED, but it does not yet talk to the network. To complete the pipeline:
+
+1. Add WiFi + HTTP client libraries: `WiFi.h`, `HTTPClient.h`, and `ArduinoJson.h`.
+2. Connect to WiFi in `setup()`.
+3. On a timer (e.g. every 5–10s), build a JSON body from the sketch's existing sensor variables (`bpmAverage`, `bodyTempC`, `fallAlertActive()`, `gps.location.lng()`, `gps.location.lat()`) and `HTTPClient.POST()` it to `http://<server-host>:3000/api/ingest`, including a hardcoded `device_id` matching the value stored on the patient's Firestore document.
+4. No Firebase credentials are needed on the device — only your Node server (via the Admin SDK) is trusted to write.
+
+Wiring reference (from the sketch header):
+
+| Component | Pin |
+|---|---|
+| I2C SDA (OLED, MLX90614, MPU6050, MAX30102) | GPIO19 |
+| I2C SCL | GPIO23 |
+| GPS TX → ESP32 RX | GPIO16 |
+| GPS RX → ESP32 TX | GPIO17 |
+| All sensor VCC | ESP32 3V |
+| All GND | common ground |
+
+---
+
+## 8. Project structure
+
+```
+SECMS/
+├── index.html                 Dashboard markup
+├── app.js                     Frontend logic: Firebase Auth, Firestore live listener, rendering
+├── styles.css                 Styling, including a "temporarily hidden" section for UI toggles
+├── server.js                  Node backend: static file server + /api/ingest (Firebase Admin SDK)
+├── server.ps1                 Windows PowerShell fallback backend (demo data only, not Firebase-integrated)
+├── favicon.svg                Generated favicon matching the sidebar brand mark
+├── serviceAccountKey.json     Firebase Admin credentials (you provide this — gitignored)
+├── .gitignore                 Excludes serviceAccountKey.json, node_modules, .env
+├── package.json
+└── arduino/
+    └── SCEMS_Wemos_Lolin32_Lite/
+        └── SCEMS_Wemos_Lolin32_Lite.ino   ESP32 sensor firmware
 ```
 
-## Backend API
+---
 
-- `GET /api/state` returns patients, alerts, devices, and configuration.
-- `POST /api/alerts` creates a simulated alert.
-- `POST /api/config` stores remote configuration changes.
+## 9. Security notes
 
-## Hardware integration path
-
-Replace the simulator inside `server.js` with MQTT/WebSocket ingestion from the ESP32 system:
-
-- `MAX30105` or pulse sensor publishes heart rate.
-- `MPU6050` publishes fall risk and impact events.
-- `NEO-6M` publishes latitude and longitude.
-- `SIM800L` alert status can be mirrored into `/api/alerts`.
-
-For production, add authentication, persistent storage, TLS, audit logs, and a proper MQTT broker bridge.
+- `serviceAccountKey.json` is a full-trust credential for your Firebase project — treat it like a password. It's git-ignored; never paste its contents anywhere, including chat or commit messages.
+- Firestore rules block **all** client-side writes to `patients` — the only write path is the backend's Admin SDK, which bypasses rules by design. If you ever add a feature that needs the browser to write data, do it through a new backend endpoint, not by loosening the Firestore rule.
+- Firebase Auth requires email verification before the dashboard unlocks (see `onAuthStateChanged` in `app.js`) — an unverified sign-in is immediately signed back out.
+- This is a coursework/prototype project. For a real production deployment you'd also want: TLS in front of `server.js`, rate limiting on `/api/ingest`, per-device auth (so one compromised ESP32 can't POST readings for another patient's `device_id`), and audit logging.

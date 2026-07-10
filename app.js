@@ -2,16 +2,17 @@
 // 1. FIREBASE MODULAR SDK IMPORTS & CONFIGURATION
 // ==========================================================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { 
-  getAuth, 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword, 
-  onAuthStateChanged, 
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  onAuthStateChanged,
   signOut,
   GoogleAuthProvider,
   signInWithPopup,
   sendEmailVerification
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBXAYTtaJnG_B1RY5c9J6Bh9U-rJxoDKJk",
@@ -24,7 +25,11 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
+let unsubscribePatients = null;
+let alertIdCounter = 0;
+const activeRiskAlerts = {};
 
 // ==========================================================================
 // 2. MAIN APPLICATION STATE ENGINE (Your original 'const state = { ... }' goes below)
@@ -32,60 +37,17 @@ const googleProvider = new GoogleAuthProvider();
 
 const state = {
   activeSection: "dashboard",
-  selectedPatient: "mary",
+  selectedPatient: null,
   soundEnabled: false,
   voiceEnabled: false,
-  tick: 0,
-  patients: [
-    {
-      id: "mary",
-      name: "Mary Perera",
-      age: 78,
-      initials: "MP",
-      risk: "High",
-      condition: "Hypertension watch",
-      location: "Colombo 07",
-      heart: 78,
-      fallRisk: 24,
-      deviceId: "SECMS-ESP32-001",
-      contacts: [
-        { name: "Anush", relation: "Son", phone: "+94 77 123 4567", email: "nimal@example.com" },
-        { name: "Dr. Silva", relation: "Physician", phone: "+94 11 222 3344", email: "care@example.com" }
-      ]
-    },
-    {
-      id: "anil",
-      name: "Anil Fernando",
-      age: 82,
-      initials: "AF",
-      risk: "Medium",
-      condition: "Mobility support",
-      location: "Nugegoda",
-      heart: 86,
-      fallRisk: 18,
-      deviceId: "SECMS-ESP32-002",
-      contacts: [
-        { name: "Maya Fernando", relation: "Daughter", phone: "+94 76 222 4577", email: "maya@example.com" },
-        { name: "Care Desk", relation: "Care team", phone: "+94 11 888 0199", email: "desk@example.com" }
-      ]
-    }
-  ],
-  alerts: [
-    { id: 1, severity: "critical", title: "Fall detected near home entrance", person: "Mary Perera", time: "2 min ago", status: "New", detail: "MPU6050 impact pattern crossed sensitivity threshold. SMS sent." },
-    { id: 2, severity: "warning", title: "Heart rate above normal band", person: "Anil Fernando", time: "18 min ago", status: "Acknowledged", detail: "Heart rate peaked at 104 bpm for 3 minutes." },
-    { id: 3, severity: "resolved", title: "GPS signal restored", person: "Mary Perera", time: "1 hr ago", status: "Resolved", detail: "NEO-6M reacquired a stable location lock." },
-    { id: 4, severity: "warning", title: "Device battery below 30%", person: "Anil Fernando", time: "2 hr ago", status: "New", detail: "Recommend charging within the next care round." }
-  ],
-  notes: [
-    { text: "Patient mentioned mild dizziness after lunch.", time: "Today, 2:15 PM", person: "Mary Perera" },
-    { text: "Evening walk completed with caregiver assistance.", time: "Yesterday, 6:40 PM", person: "Anil Fernando" }
-  ],
+  patients: [],
+  alerts: [],
   devices: [
     { id: "SECMS-ESP32-001", name: "Mary bedside unit", owner: "Mary Perera", status: "Online", battery: 84, last: "Just now", signal: 96 },
     { id: "SECMS-ESP32-002", name: "Anil wearable node", owner: "Anil Fernando", status: "Online", battery: 68, last: "1 min ago", signal: 88 },
     { id: "SECMS-ESP32-003", name: "Spare test unit", owner: "Unassigned", status: "Offline", battery: 23, last: "2 days ago", signal: 0 }
   ],
-  heartTrend: [72, 74, 78, 81, 79, 84, 88, 82, 80, 86, 91, 87],
+  heartTrend: [],
   fallTrend: [0, 1, 0, 0, 2, 1, 0],
   locationTrail: [
     { place: "Bedroom", time: "7:10 AM", detail: "Morning vitals check completed." },
@@ -105,7 +67,6 @@ document.addEventListener("DOMContentLoaded", () => {
   bindSettings();
   
   hydrateFromBackend();
-  setInterval(updateLiveData, 3200);
   renderAll();
 
   // Elements mapping
@@ -280,18 +241,18 @@ document.addEventListener("DOMContentLoaded", () => {
       if (signInHeaderBtn) signInHeaderBtn.style.display = "none";
       if (getFreeHeaderBtn) {
         getFreeHeaderBtn.textContent = "Sign Out";
-        getFreeHeaderBtn.style.background = "var(--red)";
         getFreeHeaderBtn.onclick = (e) => { e.preventDefault(); signOut(auth); };
       }
+      subscribeToPatients();
     } else {
       // Fallback state matches lock constraints
       if (shield) shield.classList.remove("hidden");
       if (signInHeaderBtn) signInHeaderBtn.style.display = "inline-block";
       if (getFreeHeaderBtn) {
         getFreeHeaderBtn.textContent = "Get it free";
-        getFreeHeaderBtn.style.background = "#2563eb";
         getFreeHeaderBtn.onclick = (e) => { e.preventDefault(); openAuthPortal("signup"); };
       }
+      unsubscribeFromPatients();
     }
   });
 });
@@ -308,13 +269,16 @@ function bindNavigation() {
     button.addEventListener("click", () => showSection(button.dataset.sectionJump));
   });
 
-  $$(".segment").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.selectedPatient = button.dataset.patient;
-      $$(".segment").forEach((item) => item.classList.toggle("active", item === button));
-      renderDashboard();
-      toast(`Viewing ${button.textContent.trim()} care data`);
-    });
+  $("#patientSegments").addEventListener("click", (event) => {
+    const button = event.target.closest(".segment");
+    if (!button) return;
+    state.selectedPatient = button.dataset.patient;
+    renderPatientSegments();
+    const patient = getSelectedPatient();
+    state.heartTrend = patient ? [patient.heart] : [];
+    renderDashboard();
+    renderCharts();
+    toast(`Viewing ${button.textContent.trim()} care data`);
   });
 }
 
@@ -334,20 +298,6 @@ function bindActions() {
 
   $$("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button.dataset.action));
-  });
-
-  $("#noteForm").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const input = $("#noteText");
-    const text = input.value.trim();
-    if (!text) {
-      toast("Write a note before saving");
-      return;
-    }
-    state.notes.unshift({ text, time: "Just now", person: getSelectedPatient().name });
-    input.value = "";
-    renderNotes();
-    toast("Caregiver note saved");
   });
 
   $("#alertFilter").addEventListener("change", renderAlerts);
@@ -382,56 +332,209 @@ function bindSettings() {
   });
 }
 
+function subscribeToPatients() {
+  if (unsubscribePatients) return;
+  unsubscribePatients = onSnapshot(collection(db, "patients"), (snapshot) => {
+    state.patients = snapshot.docs.map(mapPatientDoc);
+
+    const validIds = new Set([...state.patients.map((patient) => patient.id), "unified"]);
+    if (!validIds.has(state.selectedPatient)) {
+      state.selectedPatient = state.patients[0]?.id ?? null;
+    }
+
+    snapshot.docChanges().forEach((change) => {
+      if (change.doc.id === state.selectedPatient && change.type !== "removed") {
+        state.heartTrend = [...state.heartTrend, mapPatientDoc(change.doc).heart].slice(-12);
+      }
+    });
+
+    state.patients.forEach(evaluateRiskAlerts);
+    renderAll();
+  }, (error) => {
+    toast(`Live data error: ${error.message}`);
+  });
+}
+
+function unsubscribeFromPatients() {
+  if (unsubscribePatients) {
+    unsubscribePatients();
+    unsubscribePatients = null;
+  }
+  state.patients = [];
+  state.selectedPatient = null;
+  state.heartTrend = [];
+  Object.keys(activeRiskAlerts).forEach((key) => delete activeRiskAlerts[key]);
+  renderAll();
+}
+
+function mapPatientDoc(docSnap) {
+  const data = docSnap.data();
+  const fname = data.fname || "";
+  const lname = data.lname || "";
+  const heart = Number(data.heart_rate ?? 0);
+  return {
+    id: docSnap.id,
+    name: `${fname} ${lname}`.trim() || data.username || docSnap.id,
+    initials: `${fname[0] || ""}${lname[0] || ""}`.toUpperCase() || "?",
+    age: data.age ?? "-",
+    condition: data.condition || "General monitoring",
+    contactPhone: data.contact_phone || "",
+    heart,
+    bodyTemp: Number(data.body_temp ?? 0),
+    fallDetected: Boolean(data.fall_detect),
+    longitude: typeof data.longitude === "number" ? data.longitude : undefined,
+    latitude: typeof data.latitude === "number" ? data.latitude : undefined,
+    deviceId: data.device_id || "",
+    risk: data.fall_detect ? "High" : heart > 100 || heart < 55 ? "Medium" : "Low",
+    lastUpdated: data.last_updated
+  };
+}
+
+function evaluateRiskAlerts(patient) {
+  const heartLevel = patient.heart > 105 ? "critical" : patient.heart > 96 ? "warning" : "normal";
+  const tempLevel = patient.bodyTemp > 38.5 ? "critical" : patient.bodyTemp > 37.5 ? "warning" : "normal";
+  const fallLevel = patient.fallDetected ? "critical" : "normal";
+
+  updateRiskAlert(patient, "fall", fallLevel, "Fall detected", `Impact signature detected for ${patient.name}. Emergency contacts should be notified.`);
+  updateRiskAlert(patient, "heart", heartLevel, heartLevel === "critical" ? "Heart rate critical" : "Heart rate elevated", `${patient.heart} bpm recorded for ${patient.name}.`);
+  updateRiskAlert(patient, "temp", tempLevel, tempLevel === "critical" ? "Fever detected" : "Body temperature elevated", `${patient.bodyTemp.toFixed(1)}°C recorded for ${patient.name}.`);
+}
+
+function updateRiskAlert(patient, axis, level, title, detail) {
+  const key = `${patient.id}:${axis}`;
+  const existing = activeRiskAlerts[key];
+
+  if (level === "normal") {
+    if (existing) {
+      const alert = state.alerts.find((item) => item.id === existing.id);
+      if (alert) alert.status = "Resolved";
+      delete activeRiskAlerts[key];
+    }
+    return;
+  }
+
+  if (existing && existing.severity === level) return;
+
+  if (existing) {
+    const alert = state.alerts.find((item) => item.id === existing.id);
+    if (alert) alert.status = "Resolved";
+  }
+
+  const alert = {
+    id: `${Date.now()}-${alertIdCounter++}`,
+    severity: level,
+    title,
+    person: patient.name,
+    time: "Just now",
+    status: "New",
+    detail
+  };
+  state.alerts.unshift(alert);
+  state.alerts = state.alerts.slice(0, 20);
+  activeRiskAlerts[key] = { id: alert.id, severity: level };
+}
+
+function formatLastUpdated(timestamp) {
+  if (!timestamp || typeof timestamp.toDate !== "function") return "just now";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp.toDate().getTime()) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
+function renderPatientSegments() {
+  const container = $("#patientSegments");
+  if (!container) return;
+  const buttons = state.patients.map((patient) => `
+    <button class="segment${state.selectedPatient === patient.id ? " active" : ""}" type="button" data-patient="${patient.id}">${patient.name.split(" ")[0]}</button>
+  `);
+  if (state.patients.length > 1) {
+    buttons.push(`<button class="segment${state.selectedPatient === "unified" ? " active" : ""}" type="button" data-patient="unified">Unified</button>`);
+  }
+  container.innerHTML = buttons.join("");
+}
+
 function renderAll() {
+  renderPatientSegments();
   renderDashboard();
   renderAlerts();
   renderProfiles();
   renderDevices();
-  renderNotes();
   renderCharts();
   renderTimeline();
 }
 
 function renderDashboard() {
   const patient = getSelectedPatient();
-  $("#heroName").textContent = patient.id === "unified" ? "Monitoring all enrolled loved ones" : `Monitoring ${patient.name}`;
+  if (!patient) {
+    $("#heroName").textContent = "Waiting for patient data...";
+    $("#priorityAlerts").innerHTML = "";
+    return;
+  }
+  $("#heroName").innerHTML = patient.id === "unified"
+    ? `Monitoring <span class="hero-name-highlight">all enrolled loved ones</span>`
+    : `Monitoring <span class="hero-name-highlight">${patient.name}</span>`;
   $("#heartRate").textContent = patient.heart;
-  $("#fallScore").textContent = patient.fallRisk;
-  $("#signalStrength").textContent = getDeviceForPatient(patient).signal;
+  $("#bodyTemp").textContent = patient.bodyTemp.toFixed(1);
+  $("#tempStatus").className = `status-pill ${patient.bodyTemp > 38.5 ? "critical" : patient.bodyTemp > 37.5 ? "warning" : "normal"}`;
+  $("#tempStatus").textContent = patient.bodyTemp > 38.5 ? "Fever" : patient.bodyTemp > 37.5 ? "Elevated" : "Normal";
+  $("#tempHint").textContent = patient.bodyTemp > 38.5 ? "Above fever threshold. Contact caregiver." : patient.bodyTemp > 37.5 ? "Slightly elevated. Keep watch." : "Within normal care threshold.";
   $("#heartRange").style.width = `${Math.min(96, Math.max(12, patient.heart - 25))}%`;
   $("#heartStatus").className = `status-pill ${patient.heart > 105 ? "critical" : patient.heart > 96 ? "warning" : "normal"}`;
   $("#heartStatus").textContent = patient.heart > 105 ? "Critical" : patient.heart > 96 ? "Warning" : "Normal";
   $("#heartHint").textContent = patient.heart > 105 ? "Above configured threshold. Contact caregiver." : patient.heart > 96 ? "Slightly elevated. Keep watch." : "Within normal care threshold.";
-  $("#fallStatus").className = `status-pill ${patient.fallRisk > 70 ? "critical" : patient.fallRisk > 35 ? "warning" : "normal"}`;
-  $("#fallStatus").textContent = patient.fallRisk > 70 ? "Fall detected" : patient.fallRisk > 35 ? "Watching" : "Calm";
-  $("#fallHint").textContent = patient.fallRisk > 70 ? "Impact signature detected. Emergency contacts notified." : "No current fall, gait variance monitored.";
-  $("#gpsHint").textContent = `${patient.location}, updated just now.`;
-  $("#mapMarker").style.left = `${54 + (state.tick % 8)}%`;
-  $("#mapMarker").style.top = `${34 + (state.tick % 6)}%`;
-  renderWatchlist();
+  $("#fallScore").textContent = patient.fallDetected ? "Detected" : "Clear";
+  $("#fallStatus").className = `status-pill ${patient.fallDetected ? "critical" : "normal"}`;
+  $("#fallStatus").textContent = patient.fallDetected ? "Fall detected" : "Calm";
+  $("#fallHint").textContent = patient.fallDetected ? "Impact signature detected. Emergency contacts notified." : "No current fall detected.";
+  const hasGps = typeof patient.latitude === "number" && typeof patient.longitude === "number";
+  $("#gpsHint").textContent = hasGps
+    ? `${patient.latitude.toFixed(4)}, ${patient.longitude.toFixed(4)}, updated ${formatLastUpdated(patient.lastUpdated)}.`
+    : "Waiting for GPS fix.";
+  renderPriorityAlerts(patient);
 }
 
-function renderWatchlist() {
-  $("#watchlist").innerHTML = state.patients.map((patient) => `
-    <div class="watch-card">
-      <span class="avatar">${patient.initials}</span>
+function renderPriorityAlerts(patient) {
+  const items = [];
+
+  if (patient.fallDetected) {
+    items.push({
+      severity: "critical",
+      title: "Fall detected",
+      detail: `Impact signature detected for ${patient.name}. Emergency contacts should be notified.`
+    });
+  }
+
+  if (patient.heart > 105) {
+    items.push({ severity: "critical", title: "Heart rate critical", detail: `${patient.heart} bpm — above the critical threshold.` });
+  } else if (patient.heart > 96) {
+    items.push({ severity: "warning", title: "Heart rate elevated", detail: `${patient.heart} bpm — slightly above the normal range.` });
+  }
+
+  if (patient.bodyTemp > 38.5) {
+    items.push({ severity: "critical", title: "Fever detected", detail: `${patient.bodyTemp.toFixed(1)}°C — above the fever threshold.` });
+  } else if (patient.bodyTemp > 37.5) {
+    items.push({ severity: "warning", title: "Body temperature elevated", detail: `${patient.bodyTemp.toFixed(1)}°C — slightly above normal.` });
+  }
+
+  $("#priorityAlerts").innerHTML = items.map((item) => `
+    <div class="priority-alert ${item.severity}">
+      <div><span class="alert-ring ${item.severity}" aria-hidden="true">!</span></div>
       <div>
-        <strong>${patient.name}</strong>
-        <p>${patient.condition} - ${patient.location}</p>
+        <h3>${item.title}</h3>
+        <p>${item.detail}</p>
       </div>
-      <span class="status-pill ${patient.risk === "High" ? "critical" : "warning"}">${patient.risk}</span>
+      <div class="priority-actions">
+        <button class="secondary-button small" type="button" data-section-jump="alerts">View alert</button>
+      </div>
     </div>
   `).join("");
-}
 
-function renderNotes() {
-  $("#notesList").innerHTML = state.notes.map((note) => `
-    <div class="note-item">
-      <strong>${note.person}</strong>
-      <p>${note.text}</p>
-      <small class="muted">${note.time}</small>
-    </div>
-  `).join("");
+  $$("#priorityAlerts [data-section-jump]").forEach((button) => {
+    button.addEventListener("click", () => showSection(button.dataset.sectionJump));
+  });
 }
 
 function renderAlerts() {
@@ -472,25 +575,23 @@ function renderProfiles() {
           <p>${patient.age} years - ${patient.condition}</p>
         </div>
       </div>
-      <p>Primary device: ${patient.deviceId}. Current risk level is ${patient.risk.toLowerCase()} with live monitoring enabled.</p>
-      <div class="contact-list">
-        ${patient.contacts.map((contact) => `
+      <p>Primary device: ${patient.deviceId || "Not assigned"}. Current risk level is ${patient.risk.toLowerCase()} with live monitoring enabled.</p>
+      ${patient.contactPhone ? `
+        <div class="contact-list">
           <div class="contact-card">
-            <strong>${contact.name}</strong>
-            <span>${contact.relation} - ${contact.phone}</span>
+            <strong>Emergency contact</strong>
+            <span>${patient.contactPhone}</span>
             <div class="contact-actions">
-              <button class="secondary-button small" type="button" data-contact-action="call">Call</button>
-              <button class="secondary-button small" type="button" data-contact-action="sms">SMS</button>
-              <button class="secondary-button small" type="button" data-contact-action="email">Email</button>
+              <button class="secondary-button small" type="button" data-contact-action="call" data-phone="${patient.contactPhone}">Call</button>
             </div>
           </div>
-        `).join("")}
-      </div>
+        </div>
+      ` : ""}
     </article>
   `).join("");
 
   $$("[data-contact-action]").forEach((button) => {
-    button.addEventListener("click", () => toast(`${button.textContent.trim()} action prepared`));
+    button.addEventListener("click", () => toast(`Calling ${button.dataset.phone}`));
   });
 }
 
@@ -612,44 +713,15 @@ function roundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function updateLiveData() {
-  state.tick += 1;
-  state.patients.forEach((patient, index) => {
-    const wave = Math.round(Math.sin((state.tick + index) / 2) * 5);
-    patient.heart = Math.max(56, Math.min(116, patient.heart + wave - 2));
-    patient.fallRisk = Math.max(8, Math.min(82, patient.fallRisk + Math.round(Math.cos((state.tick + index) / 3) * 4)));
-  });
-  state.heartTrend.push(getSelectedPatient().heart);
-  state.heartTrend = state.heartTrend.slice(-12);
-  renderDashboard();
-  renderCharts();
-  if (state.tick % 6 === 0) {
-    const patient = getSelectedPatient();
-    const generated = {
-      id: Date.now(),
-      severity: patient.heart > 102 ? "warning" : "resolved",
-      title: patient.heart > 102 ? "Elevated heart rate trend" : "Routine vitals snapshot",
-      person: patient.name,
-      time: "Just now",
-      status: patient.heart > 102 ? "New" : "Resolved",
-      detail: `${patient.heart} bpm captured from live simulation.`
-    };
-    state.alerts.unshift(generated);
-    state.alerts = state.alerts.slice(0, 8);
-    renderAlerts();
-  }
-}
-
 function getSelectedPatient() {
+  if (!state.patients.length) return null;
   if (state.selectedPatient === "unified") {
-    const highRisk = [...state.patients].sort((a, b) => b.fallRisk - a.fallRisk)[0];
-    return { ...highRisk, name: "Unified dashboard", id: "unified" };
+    const highestPriority = [...state.patients].sort(
+      (a, b) => Number(b.fallDetected) - Number(a.fallDetected) || b.heart - a.heart
+    )[0];
+    return { ...highestPriority, name: "Unified dashboard", id: "unified" };
   }
   return state.patients.find((patient) => patient.id === state.selectedPatient) || state.patients[0];
-}
-
-function getDeviceForPatient(patient) {
-  return state.devices.find((device) => device.id === patient.deviceId) || state.devices[0];
 }
 
 function showSection(section) {
@@ -660,27 +732,32 @@ function showSection(section) {
 }
 
 function handleAction(action) {
+  const patient = getSelectedPatient();
   const actions = {
     sos: () => confirmModal("Trigger Emergency SOS", "This will notify emergency contacts, start voice alerting, and mark the current location as critical.", () => {
-      createAlert("critical", "Emergency SOS triggered", getSelectedPatient().name, "Caregiver activated dashboard SOS.");
+      createAlert("critical", "Emergency SOS triggered", patient.name, "Caregiver activated dashboard SOS.");
       voice("Emergency SOS triggered.");
       toast("Emergency SOS sent");
     }),
     report: () => toast("Branded care report generated with vitals, alerts, notes, and device history"),
     "test-alert": () => {
-      createAlert("warning", "Test alert sent", getSelectedPatient().name, "Caregiver test alert completed successfully.");
+      createAlert("warning", "Test alert sent", patient.name, "Caregiver test alert completed successfully.");
       playTone();
       toast("Test alert added to feed");
     },
-    ack: () => {
-      state.alerts[0].status = "Acknowledged";
-      renderAlerts();
-      toast("Priority alert acknowledged");
+    voice: () => {
+      const location = typeof patient.latitude === "number"
+        ? `${patient.latitude.toFixed(4)}, ${patient.longitude.toFixed(4)}`
+        : "an unknown location";
+      voice(`Fall detected. Location is ${location}. Emergency contacts have been notified.`);
     },
-    voice: () => voice("Fall detected. Location is Colombo 07. Emergency contacts have been notified."),
     export: () => exportCsv(),
     share: () => toast("Shareable report link prepared")
   };
+  if (!patient && ["sos", "test-alert", "voice"].includes(action)) {
+    toast("No patient data yet — sign in and wait for live data.");
+    return;
+  }
   actions[action]?.();
 }
 
@@ -740,18 +817,15 @@ function renderSearch() {
   const query = $("#globalSearch").value.trim().toLowerCase();
   if (!query) {
     renderAlerts();
-    renderNotes();
     return;
   }
   const alertMatches = state.alerts.filter((alert) => `${alert.title} ${alert.person} ${alert.detail}`.toLowerCase().includes(query));
-  const noteMatches = state.notes.filter((note) => `${note.text} ${note.person}`.toLowerCase().includes(query));
   $("#alertFeed").innerHTML = alertMatches.map((alert) => `
     <article class="alert-item ${alert.severity}">
       <span class="metric-icon fall" aria-hidden="true">~</span>
       <div><span class="status-pill ${alert.severity}">${alert.status}</span><h3>${alert.title}</h3><p>${alert.person} - ${alert.detail}</p></div>
     </article>
   `).join("");
-  $("#notesList").innerHTML = noteMatches.map((note) => `<div class="note-item"><strong>${note.person}</strong><p>${note.text}</p><small class="muted">${note.time}</small></div>`).join("");
 }
 
 function collectConfig() {
@@ -768,15 +842,12 @@ async function hydrateFromBackend() {
     const response = await fetch("/api/state", { cache: "no-store" });
     if (!response.ok) return;
     const data = await response.json();
-    if (data?.patients) {
-      state.patients = data.patients;
-      state.alerts = data.alerts || state.alerts;
-      state.devices = data.devices || state.devices;
-      renderAll();
-      toast("Connected to backend simulator");
-    }
+    state.alerts = data.alerts || state.alerts;
+    state.devices = data.devices || state.devices;
+    renderAlerts();
+    renderDevices();
   } catch {
-    // Opening index.html directly uses the in-browser simulator.
+    // No backend running: alerts/devices stay on their local demo values.
   }
 }
 

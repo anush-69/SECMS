@@ -2,50 +2,19 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const url = require("url");
+const { initializeApp, cert } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
 
+initializeApp({
+  credential: cert(require("./serviceAccountKey.json"))
+});
+const db = getFirestore();
+
 const state = {
-  patients: [
-    {
-      id: "mary",
-      name: "Mary Perera",
-      age: 78,
-      initials: "MP",
-      risk: "High",
-      condition: "Hypertension watch",
-      location: "Colombo 07",
-      heart: 78,
-      fallRisk: 24,
-      deviceId: "SECMS-ESP32-001",
-      contacts: [
-        { name: "Nimal Perera", relation: "Son", phone: "+94 77 123 4567", email: "nimal@example.com" },
-        { name: "Dr. Silva", relation: "Physician", phone: "+94 11 222 3344", email: "care@example.com" }
-      ]
-    },
-    {
-      id: "anil",
-      name: "Anil Fernando",
-      age: 82,
-      initials: "AF",
-      risk: "Medium",
-      condition: "Mobility support",
-      location: "Nugegoda",
-      heart: 86,
-      fallRisk: 18,
-      deviceId: "SECMS-ESP32-002",
-      contacts: [
-        { name: "Maya Fernando", relation: "Daughter", phone: "+94 76 222 4577", email: "maya@example.com" },
-        { name: "Care Desk", relation: "Care team", phone: "+94 11 888 0199", email: "desk@example.com" }
-      ]
-    }
-  ],
-  alerts: [
-    { id: 1, severity: "critical", title: "Fall detected near home entrance", person: "Mary Perera", time: "2 min ago", status: "New", detail: "MPU6050 impact pattern crossed sensitivity threshold. SMS sent." },
-    { id: 2, severity: "warning", title: "Heart rate above normal band", person: "Anil Fernando", time: "18 min ago", status: "Acknowledged", detail: "Heart rate peaked at 104 bpm for 3 minutes." },
-    { id: 3, severity: "resolved", title: "GPS signal restored", person: "Mary Perera", time: "1 hr ago", status: "Resolved", detail: "NEO-6M reacquired a stable location lock." }
-  ],
+  alerts: [],
   devices: [
     { id: "SECMS-ESP32-001", name: "Mary bedside unit", owner: "Mary Perera", status: "Online", battery: 84, last: "Just now", signal: 96 },
     { id: "SECMS-ESP32-002", name: "Anil wearable node", owner: "Anil Fernando", status: "Online", battery: 68, last: "1 min ago", signal: 88 },
@@ -69,18 +38,6 @@ const mime = {
   ".jpeg": "image/jpeg",
   ".svg": "image/svg+xml"
 };
-
-setInterval(() => {
-  state.patients = state.patients.map((patient, index) => {
-    const heartDelta = Math.round(Math.sin((Date.now() / 3500) + index) * 4);
-    const fallDelta = Math.round(Math.cos((Date.now() / 5200) + index) * 3);
-    return {
-      ...patient,
-      heart: clamp(patient.heart + heartDelta - 1, 54, 118),
-      fallRisk: clamp(patient.fallRisk + fallDelta, 8, 85)
-    };
-  });
-}, 3500);
 
 const server = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url, true);
@@ -109,6 +66,28 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     state.config = { ...state.config, ...body, updatedAt: new Date().toISOString() };
     return json(res, { ok: true, config: state.config });
+  }
+
+  if (parsed.pathname === "/api/ingest" && req.method === "POST") {
+    const body = await readBody(req);
+    if (!body.device_id) {
+      return badRequest(res, "device_id is required");
+    }
+
+    const patientId = await findPatientIdByDevice(body.device_id);
+    if (!patientId) {
+      return notFound(res, `No patient registered for device_id "${body.device_id}"`);
+    }
+
+    const update = { last_updated: FieldValue.serverTimestamp() };
+    if (body.heart_rate !== undefined) update.heart_rate = Number(body.heart_rate);
+    if (body.body_temp !== undefined) update.body_temp = Number(body.body_temp);
+    if (body.fall_detect !== undefined) update.fall_detect = Boolean(body.fall_detect);
+    if (body.longitude !== undefined) update.longitude = Number(body.longitude);
+    if (body.latitude !== undefined) update.latitude = Number(body.latitude);
+
+    await db.collection("patients").doc(patientId).set(update, { merge: true });
+    return json(res, { ok: true, patientId });
   }
 
   const filePath = safeFilePath(parsed.pathname);
@@ -145,9 +124,20 @@ function json(res, payload, status = 200) {
   res.end(JSON.stringify(payload));
 }
 
-function notFound(res) {
+function notFound(res, message = "Not found") {
   res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify({ error: "Not found" }));
+  res.end(JSON.stringify({ error: message }));
+}
+
+function badRequest(res, message) {
+  res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify({ error: message }));
+}
+
+async function findPatientIdByDevice(deviceId) {
+  const snapshot = await db.collection("patients").where("device_id", "==", deviceId).limit(1).get();
+  if (snapshot.empty) return null;
+  return snapshot.docs[0].id;
 }
 
 function readBody(req) {
@@ -165,8 +155,4 @@ function readBody(req) {
       }
     });
   });
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }

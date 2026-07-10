@@ -14,5 +14,8 @@
     "secms"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "firebase-admin": "^14.1.0"
+  }
 }

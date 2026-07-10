@@ -9,14 +9,14 @@ $RootWithSlash = $Root.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [Syst
 $State = [ordered]@{
   patients = @(
     [ordered]@{
-      id = "mary"; name = "Mary Perera"; age = 78; initials = "MP"; risk = "High"; condition = "Hypertension watch"; location = "Colombo 07"; heart = 78; fallRisk = 24; deviceId = "SECMS-ESP32-001";
+      id = "mary"; name = "Mary Perera"; age = 78; initials = "MP"; risk = "High"; condition = "Hypertension watch"; location = "Colombo 07"; heart = 78; fallRisk = 24; bodyTemp = 36.8; deviceId = "SECMS-ESP32-001";
       contacts = @(
         [ordered]@{ name = "Nimal Perera"; relation = "Son"; phone = "+94 77 123 4567"; email = "nimal@example.com" },
         [ordered]@{ name = "Dr. Silva"; relation = "Physician"; phone = "+94 11 222 3344"; email = "care@example.com" }
       )
     },
     [ordered]@{
-      id = "anil"; name = "Anil Fernando"; age = 82; initials = "AF"; risk = "Medium"; condition = "Mobility support"; location = "Nugegoda"; heart = 86; fallRisk = 18; deviceId = "SECMS-ESP32-002";
+      id = "anil"; name = "Anil Fernando"; age = 82; initials = "AF"; risk = "Medium"; condition = "Mobility support"; location = "Nugegoda"; heart = 86; fallRisk = 18; bodyTemp = 37.1; deviceId = "SECMS-ESP32-002";
       contacts = @(
         [ordered]@{ name = "Maya Fernando"; relation = "Daughter"; phone = "+94 76 222 4577"; email = "maya@example.com" },
         [ordered]@{ name = "Care Desk"; relation = "Care team"; phone = "+94 11 888 0199"; email = "desk@example.com" }
@@ -104,6 +104,7 @@ function Update-SimulatedVitals {
   foreach ($Patient in $State.patients) {
     $Patient.heart = [Math]::Max(54, [Math]::Min(118, $Patient.heart + (Get-Random -Minimum -2 -Maximum 3)))
     $Patient.fallRisk = [Math]::Max(8, [Math]::Min(85, $Patient.fallRisk + (Get-Random -Minimum -1 -Maximum 2)))
+    $Patient.bodyTemp = [Math]::Round([Math]::Max(35.5, [Math]::Min(39.5, $Patient.bodyTemp + (Get-Random -Minimum -0.1 -Maximum 0.11))), 1)
   }
 }
 
