@@ -544,8 +544,12 @@ function renderDashboard() {
   $("#fallStatus").textContent = patient.fallDetected ? "Fall detected" : "Calm";
   $("#fallHint").textContent = patient.fallDetected ? "Impact signature detected. Emergency contacts notified." : "No current fall detected.";
   const hasGps = typeof patient.latitude === "number" && typeof patient.longitude === "number";
+  $("#gpsLat").textContent = hasGps ? patient.latitude.toFixed(4) : "--";
+  $("#gpsLng").textContent = hasGps ? patient.longitude.toFixed(4) : "--";
+  $("#gpsStatus").className = `status-pill ${hasGps ? "normal" : "warning"}`;
+  $("#gpsStatus").textContent = hasGps ? "GPS locked" : "No fix";
   $("#gpsHint").textContent = hasGps
-    ? `${patient.latitude.toFixed(4)}, ${patient.longitude.toFixed(4)}, updated ${formatLastUpdated(patient.lastUpdated)}.`
+    ? `Updated ${formatLastUpdated(patient.lastUpdated)}.`
     : "Waiting for GPS fix.";
   renderPriorityAlerts(patient);
 }
