@@ -653,6 +653,18 @@ h3 {
   box-shadow: 0 0 0 8px rgba(216, 58, 58, 0.18);
 }
 
+.gps-coords {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.gps-coords strong {
+  color: var(--text);
+}
+
 .analytics-grid {
   display: grid;
   grid-template-columns: 0.95fr 1.05fr;
