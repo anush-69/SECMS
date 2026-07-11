@@ -68,8 +68,8 @@ const unsigned long IMPACT_WINDOW_MS = 1200;
 const unsigned long FALL_ALERT_MS = 10000;
 
 // ---- WiFi & backend configuration: fill these in before flashing ----
-const char *WIFI_SSID = "REDMI Note 15 Pro+ 5G";
-const char *WIFI_PASSWORD = "wovsilva2005";
+const char *WIFI_SSID = "Dialog 4G 859";
+const char *WIFI_PASSWORD = "F15CFED3";
 const char *MDNS_HOST = "secms";  // resolves "secms.local" - no ".local" suffix here, MDNS.queryHost() adds it
 const uint16_t SERVER_PORT = 3000;
 const char *INGEST_PATH = "/api/ingest";
